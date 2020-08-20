@@ -18,16 +18,16 @@ include_directories(
 )
 
 set(SOURCE
-        src/FusionEKF.cpp
+        src/fusion_ekf.cpp
         src/kalman_filter.cpp
-        src/ekf_main.cpp
+        src/main_ekf.cpp
         src/tools.cpp)
 add_executable(ekf_node ${SOURCE})
 target_link_libraries(ekf_node
         ${catkin_LIBRARIES}
         )
 
-add_executable(ukf_node src/ukf.cpp src/ukf_main.cpp src/tools.cpp)
+add_executable(ukf_node src/fusion_ukf.cpp src/main_ukf.cpp src/tools.cpp)
 target_link_libraries(ukf_node
         ${catkin_LIBRARIES}
         )

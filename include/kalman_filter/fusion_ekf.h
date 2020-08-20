@@ -10,7 +10,7 @@
 #include "tools.h"
 
 class FusionEKF {
-public:
+ public:
   /**
   * Constructor.
   */
@@ -31,7 +31,7 @@ public:
   */
   KalmanFilter ekf_;
 
-private:
+ private:
   // check whether the tracking toolbox was initiallized or not (first measurement)
   bool is_initialized_;
 

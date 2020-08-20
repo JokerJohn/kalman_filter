@@ -19,7 +19,7 @@ void KalmanFilter::Init(VectorXd &x_in, MatrixXd &P_in, MatrixXd &F_in,
 
 // The Kalman filter predict function. The same for linear and extended Kalman filter
 void KalmanFilter::Predict() {
-  x_ = F_ * x_ ; // There is no external motion, so, we do not have to add "+u"
+  x_ = F_ * x_; // There is no external motion, so, we do not have to add "+u"
   MatrixXd Ft = F_.transpose();
   P_ = F_ * P_ * Ft + Q_;
 }
@@ -33,25 +33,25 @@ void KalmanFilter::Update(const VectorXd &z) {
 void KalmanFilter::UpdateEKF(const VectorXd &z) {
 
   // 预测的状态量->预测的观测
-  double rho = sqrt(x_(0)*x_(0) + x_(1)*x_(1));
+  double rho = sqrt(x_(0) * x_(0) + x_(1) * x_(1));
   double theta = atan(x_(1) / x_(0));
-  double rho_dot = (x_(0)*x_(2) + x_(1)*x_(3)) / rho;
+  double rho_dot = (x_(0) * x_(2) + x_(1) * x_(3)) / rho;
   VectorXd h = VectorXd(3); // h(x_)
   h << rho, theta, rho_dot;
-  
+
   VectorXd y = z - h; // 观测空间： 计算状态量残差 = 观测 - 预测
   // Calculations are essentially the same to the Update function
   KF(y);
 }
 
 // Universal update Kalman Filter step. Equations from the lectures
-void KalmanFilter::KF(const VectorXd &y){
+void KalmanFilter::KF(const VectorXd &y) {
   // 观测空间
   // 根据观测的残差计算残差的协方差矩阵、卡尔曼增益
   MatrixXd Ht = H_.transpose(); // H-1
   MatrixXd S = H_ * P_ * Ht + R_; // 观测残差的协方差矩阵
   MatrixXd Si = S.inverse();
-  MatrixXd K =  P_ * Ht * Si;  // 卡尔安增益， 预测的协方差/观测残差的协方差，即预测的权重占比
+  MatrixXd K = P_ * Ht * Si;  // 卡尔安增益， 预测的协方差/观测残差的协方差，即预测的权重占比
 
   // 更新当前系统状态
   x_ = x_ + (K * y);  // 当前状态 = 预测状态 + 权重 * 预测在残差权重的占比

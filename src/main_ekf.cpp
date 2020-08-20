@@ -1,19 +1,16 @@
-/**
- * Author: xc Hu
- * Date: 2020/8/12 下午2:15
- * Content:
- * Email: 2022087641@qq.com
- */
 
+
+#include "kalman_filter/fusion_ekf.h"
+#include "kalman_filter/ground_truth_package.h"
+#include "kalman_filter/measurement_package.h"
+
+#include "Eigen/Dense"
+#include "ros/ros.h"
 #include <fstream>
 #include <iostream>
 #include <vector>
-#include <stdlib.h>
-#include "Eigen/Dense"
-#include "kalman_filter/ukf.h"
-#include "kalman_filter/ground_truth_package.h"
-#include "kalman_filter/measurement_package.h"
-#include "ros/ros.h"
+#include <cstdlib>
+
 using namespace std;
 using Eigen::MatrixXd;
 using Eigen::VectorXd;
@@ -55,37 +52,32 @@ void check_files(ifstream &in_file, string &in_name,
   }
 }
 
-int main(int argc, char *argv[]) {
+int main(int argc, char **argv) {
 
+  ros::init(argc, argv, "kalmanfilter");
+  ros::NodeHandle node_handle;
+
+  // check参数
 //  check_arguments(argc, argv);
 //  string in_file_name_ = argv[1];
-//  ifstream in_file_(in_file_name_.c_str(), ifstream::in);
 //  string out_file_name_ = argv[2];
-//  ofstream out_file_(out_file_name_.c_str(), ofstream::out);
-//  check_files(in_file_, in_file_name_, out_file_, out_file_name_);
-
-  ros::init(argc, argv, "ukalmanfilter");
-  ros::NodeHandle node_handle;
 
   string in_file_name_ =
       "/home/xchu/workspace/hdmap_testws/src/kalman_filter/data/sample-laser-radar-measurement-data-1.txt";
-  string out_file_name_ = "/home/xchu/workspace/hdmap_testws/src/kalman_filter/data/ukf_out.txt";
+  string out_file_name_ = "/home/xchu/workspace/hdmap_testws/src/kalman_filter/data/ekf_out.txt";
 
   ifstream in_file_(in_file_name_.c_str(), ifstream::in);
   ofstream out_file_(out_file_name_.c_str(), ofstream::out);
 
+  // 校验文件路径
   check_files(in_file_, in_file_name_, out_file_, out_file_name_);
 
-  /**********************************************
-   *  Set Measurements                          *
-   **********************************************/
-
+  // measurement_pack_list 中包含一个时间戳和两种类型的数据，按时间戳顺序排列。用来存储读取的数据文件
   vector<MeasurementPackage> measurement_pack_list;
   vector<GroundTruthPackage> gt_pack_list;
 
+  // 逐行读取毫米波和激光雷达数据
   string line;
-
-  // 读数据和ground truth
   while (getline(in_file_, line)) {
     string sensor_type;
     MeasurementPackage meas_package;
@@ -93,27 +85,25 @@ int main(int argc, char *argv[]) {
     istringstream iss(line);
     long long timestamp;
 
-    // reads first element from the current line
-    iss >> sensor_type;
-
+    // 读取激光雷达、毫米波、groundTruth数据
+    iss >> sensor_type;  // 数据的第一行
     if (sensor_type.compare("L") == 0) {
-      // laser measurement
-
+      // LASER MEASUREMENT
+      // 激光雷达数据, 只有px,py
       // read measurements at this timestamp
       meas_package.sensor_type_ = MeasurementPackage::LASER;
       meas_package.raw_measurements_ = VectorXd(2);
-      float px;
-      float py;
-      iss >> px;
-      iss >> py;
-      meas_package.raw_measurements_ << px, py;
+      float x;
+      float y;
+      iss >> x;
+      iss >> y;
+      meas_package.raw_measurements_ << x, y;
       iss >> timestamp;
       meas_package.timestamp_ = timestamp;
       measurement_pack_list.push_back(meas_package);
     } else if (sensor_type.compare("R") == 0) {
-      // radar measurement
-
-      // read measurements at this timestamp
+      // RADAR MEASUREMENT
+      // 毫米波数据, 包含ro, phi, ro_dot
       meas_package.sensor_type_ = MeasurementPackage::RADAR;
       meas_package.raw_measurements_ = VectorXd(3);
       float ro;
@@ -128,7 +118,7 @@ int main(int argc, char *argv[]) {
       measurement_pack_list.push_back(meas_package);
     }
 
-    // read ground truth data to compare later
+    // ground truth data
     float x_gt;
     float y_gt;
     float vx_gt;
@@ -142,88 +132,53 @@ int main(int argc, char *argv[]) {
     gt_pack_list.push_back(gt_package);
   }
 
-  // 初始化UKF
-  UKF ukf;
+  // 初始化EKF参数
+  // EKF主要包括两个矩阵, 两个函数
+  // 状态预测函数,需要计算状态变换的F矩阵；
+  // 测量更新函数,需要计算测量变换矩阵H
+  FusionEKF fusionEKF;
 
-  // used to compute the RMSE later
   vector<VectorXd> estimations;
   vector<VectorXd> ground_truth;
 
-  size_t number_of_measurements = measurement_pack_list.size();
+  //Call the EKF-based fusion
+  size_t N = measurement_pack_list.size();
+  for (size_t k = 0; k < N; ++k) {
 
-  // column names for output file
-  out_file_ << "px" << "\t";
-  out_file_ << "py" << "\t";
-  out_file_ << "v" << "\t";
-  out_file_ << "yaw_angle" << "\t";
-  out_file_ << "yaw_rate" << "\t";
-  out_file_ << "px_measured" << "\t";
-  out_file_ << "py_measured" << "\t";
-  out_file_ << "px_true" << "\t";
-  out_file_ << "py_true" << "\t";
-  out_file_ << "vx_true" << "\t";
-  out_file_ << "vy_true" << "\t";
-  out_file_ << "NIS" << "\n";
+    // 第一帧数据初始化预测的X,P和转换矩阵F
+    // 从第二帧数据起开始进行融合 (the speed is unknown in the first frame)
+    fusionEKF.ProcessMeasurement(measurement_pack_list[k]);
 
-  for (size_t k = 0; k < number_of_measurements; ++k) {
-    // Call the UKF-based fusion
-    ukf.ProcessMeasurement(measurement_pack_list[k]);
+    // 将预测状态量结果输出到文件
+    out_file_ << fusionEKF.ekf_.x_(0) << "\t";
+    out_file_ << fusionEKF.ekf_.x_(1) << "\t";
+    out_file_ << fusionEKF.ekf_.x_(2) << "\t";
+    out_file_ << fusionEKF.ekf_.x_(3) << "\t";
 
-    // output the estimation
-    out_file_ << ukf.x_(0) << "\t"; // pos1 - est
-    out_file_ << ukf.x_(1) << "\t"; // pos2 - est
-    out_file_ << ukf.x_(2) << "\t"; // vel_abs -est
-    out_file_ << ukf.x_(3) << "\t"; // yaw_angle -est
-    out_file_ << ukf.x_(4) << "\t"; // yaw_rate -est
-
-    // output the measurements
+    // 将观测结果输出到文件
     if (measurement_pack_list[k].sensor_type_ == MeasurementPackage::LASER) {
       // output the estimation
-
-      // p1 - meas
       out_file_ << measurement_pack_list[k].raw_measurements_(0) << "\t";
-
-      // p2 - meas
       out_file_ << measurement_pack_list[k].raw_measurements_(1) << "\t";
     } else if (measurement_pack_list[k].sensor_type_ == MeasurementPackage::RADAR) {
       // output the estimation in the cartesian coordinates
       float ro = measurement_pack_list[k].raw_measurements_(0);
       float phi = measurement_pack_list[k].raw_measurements_(1);
       out_file_ << ro * cos(phi) << "\t"; // p1_meas
-      out_file_ << ro * sin(phi) << "\t"; // p2_meas
+      out_file_ << ro * sin(phi) << "\t"; // ps_meas
     }
 
-    // output the ground truth packages
+    // 输出ground truth
     out_file_ << gt_pack_list[k].gt_values_(0) << "\t";
     out_file_ << gt_pack_list[k].gt_values_(1) << "\t";
     out_file_ << gt_pack_list[k].gt_values_(2) << "\t";
-    out_file_ << gt_pack_list[k].gt_values_(3) << "\t";
+    out_file_ << gt_pack_list[k].gt_values_(3) << "\n";
 
-    // output the NIS values
-
-    if (measurement_pack_list[k].sensor_type_ == MeasurementPackage::LASER) {
-      out_file_ << ukf.NIS_laser_ << "\n";
-    } else if (measurement_pack_list[k].sensor_type_ == MeasurementPackage::RADAR) {
-      out_file_ << ukf.NIS_radar_ << "\n";
-    }
-
-
-    // convert ukf x vector to cartesian to compare to ground truth
-    VectorXd ukf_x_cartesian_ = VectorXd(4);
-
-    float x_estimate_ = ukf.x_(0);
-    float y_estimate_ = ukf.x_(1);
-    float vx_estimate_ = ukf.x_(2) * cos(ukf.x_(3));
-    float vy_estimate_ = ukf.x_(2) * sin(ukf.x_(3));
-
-    ukf_x_cartesian_ << x_estimate_, y_estimate_, vx_estimate_, vy_estimate_;
-
-    estimations.push_back(ukf_x_cartesian_);
+    estimations.push_back(fusionEKF.ekf_.x_);
     ground_truth.push_back(gt_pack_list[k].gt_values_);
-
   }
 
-  // compute the accuracy (RMSE)
+  // 计算RMSE
   Tools tools;
   cout << "Accuracy - RMSE:" << endl << tools.CalculateRMSE(estimations, ground_truth) << endl;
 
@@ -231,11 +186,9 @@ int main(int argc, char *argv[]) {
   if (out_file_.is_open()) {
     out_file_.close();
   }
-
   if (in_file_.is_open()) {
     in_file_.close();
   }
 
-  cout << "Done!" << endl;
   return 0;
 }
